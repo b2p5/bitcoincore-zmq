@@ -11,33 +11,37 @@ use std::thread::JoinHandle;
 
 use url::Url;
 
-mod errors;
+pub mod errors;
+
+#[cfg(feature = "check_node")]
+pub mod check;
 
 type Msg = Vec<Vec<u8>>;
 
+/// Enum with all possible ZMQ messages arriving through the receiver
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum MempoolSequence {
-    BlockConnection {
-        block_hash: String,
-        zmq_seq: u32,
-    },
-    BlockDisconnection {
-        block_hash: String,
-        zmq_seq: u32,
-    },
+    ///A new block has arrived with `block_hash`
+    BlockConnection { block_hash: String, zmq_seq: u32 },
+    ///A block with `block_hash` has been overridden
+    BlockDisconnection { block_hash: String, zmq_seq: u32 },
+    ///A tx with `txid` has been removed from the mempool.
     TxRemoved {
         txid: String,
         mp_seq_num: u64,
         zmq_seq: u32,
     },
+    ///A tx with `txid` has been added to the mempool.
     TxAdded {
         txid: String,
         mp_seq_num: u64,
         zmq_seq: u32,
     },
-    SeqError {
-        error: ZMQSeqListenerError,
-    },
+    ///An error has ocurred, and must be handled.
+    SeqError { error: ZMQSeqListenerError },
+    ///First message to be received, shows if bitcoind node was already working when first msg
+    ///arrives (zmq_seq==0)
+    SeqStart { bitcoind_already_working: bool },
 }
 
 impl TryFrom<Msg> for MempoolSequence {
@@ -107,6 +111,36 @@ fn parse_zmq_seq_num(value: &[u8]) -> Result<u32, ZMQSeqListenerError> {
     Ok(u32::from_le_bytes(ch))
 }
 
+/// A bitcoincore ZMQ subscriber for receiving zmqpubsequence as defined [here](https://github.com/bitcoin/bitcoin/blob/master/doc/zmq.md)
+///
+/// This is a syncronous library that launches a listening thread which uses a start/stop interface
+/// and receive data via a channel receiver.
+///
+/// [`MempoolSequence::SeqStart`] is the first data received containing whether bitcoind node has
+/// started while we were listening, or the node was already up and running. This is important because in the fist case, the channel receiver will broadcast every block and
+/// tx during node syncronization with the network. As this is normally not intended, use the
+/// [`check::NodeChecker::wait_till_node_ok`] method available when using `check_node` cargo
+/// feature.
+///
+/// After [`MempoolSequence::SeqStart`] a sequence of [`MempoolSequence::BlockConnection`],
+/// [`MempoolSequence::BlockDisconnection`], [`MempoolSequence::TxAdded`] and
+/// [`MempoolSequence::TxRemoved`] follows.
+///
+/// If any error happens, a [`MempoolSequence::SeqError`] will be sent.
+///
+/// Note that this Listener is aware of message interruptions, that is, if a zmq_seq number
+/// is skipped, a [`MempoolSequence::SeqError`] with a [`ZMQSeqListenerError::InvalidSeqNumber`] is
+/// sent.
+///
+/// Example:
+/// ```
+///    let zmqseqlistener = ZmqSeqListener::start(&Url::from_str("tcp://localhost:29000")?)?;
+///    loop{
+///        let kk = zmqseqlistener.receiver().recv()?;
+///        println!("{:?}", kk);
+///    }
+///
+/// ```
 pub struct ZmqSeqListener {
     rx: Receiver<MempoolSequence>,
     stop: Arc<AtomicBool>,
@@ -114,6 +148,7 @@ pub struct ZmqSeqListener {
 }
 
 impl ZmqSeqListener {
+    ///Starts listening ZMQ messages given the `zmq_address`.
     pub fn start(zmq_address: &Url) -> Result<Self, ZMQSeqListenerError> {
         let context = zmq::Context::new();
         let subscriber = context.socket(zmq::SUB)?;
@@ -126,12 +161,35 @@ impl ZmqSeqListener {
         let barrier = Arc::new(Barrier::new(2));
         let barrierc = barrier.clone();
         let thread = thread::spawn(move || {
-            let mut wait = true;
+            let mut is_starting = true;
+            let mut last_zmq_seq = 0;
             while !stop_th.load(Ordering::SeqCst) {
-                let mpsq = match receive_mpsq(&subscriber, &mut wait, &barrier) {
+                let mpsq = match receive_mpsq(&subscriber) {
                     Ok(mpsq) => mpsq,
                     Err(e) => MempoolSequence::SeqError { error: e },
                 };
+                if is_starting {
+                    barrier.wait();
+                    tx.send(MempoolSequence::SeqStart {
+                        bitcoind_already_working: check_bitcoind_already_working(&mpsq),
+                    })
+                    .unwrap();
+                    is_starting = false;
+                } else {
+                    let zmq_seq = zmq_seq_from(&mpsq);
+                    if zmq_seq.is_some() {
+                        if zmq_seq.unwrap() != last_zmq_seq + 1 {
+                            tx.send(MempoolSequence::SeqError {
+                                error: ZMQSeqListenerError::InvalidSeqNumber(
+                                    last_zmq_seq + 1,
+                                    zmq_seq.unwrap(),
+                                ),
+                            })
+                            .unwrap();
+                        }
+                    }
+                }
+                last_zmq_seq = zmq_seq_from(&mpsq).unwrap_or(last_zmq_seq);
                 tx.send(mpsq).unwrap();
             }
         });
@@ -139,28 +197,42 @@ impl ZmqSeqListener {
         Ok(ZmqSeqListener { rx, stop, thread })
     }
 
+    ///Stops the listening thread. Only callable once.
     pub fn stop(self) -> Result<(), Box<dyn Any + Send + 'static>> {
         self.stop.store(true, Ordering::SeqCst);
         self.thread.join()
     }
 
+    ///Obtains a `Receiver<MempoolSequence>`
     pub fn receiver(&self) -> &Receiver<MempoolSequence> {
         &self.rx
     }
 }
 
-fn receive_mpsq(
-    subscriber: &zmq::Socket,
-    wait: &mut bool,
-    barrier: &Arc<Barrier>,
-) -> Result<MempoolSequence, ZMQSeqListenerError> {
+fn check_bitcoind_already_working(mpsq: &MempoolSequence) -> bool {
+    matches!(
+        mpsq,
+        MempoolSequence::BlockConnection { zmq_seq, .. }
+            | MempoolSequence::BlockDisconnection { zmq_seq, .. }
+            | MempoolSequence::TxRemoved { zmq_seq, .. }
+            | MempoolSequence::TxAdded { zmq_seq, .. }
+            if *zmq_seq != 0
+    )
+}
+
+fn zmq_seq_from(mpsq: &MempoolSequence) -> Option<u32> {
+    match mpsq {
+        MempoolSequence::BlockConnection { zmq_seq, .. }
+        | MempoolSequence::BlockDisconnection { zmq_seq, .. }
+        | MempoolSequence::TxRemoved { zmq_seq, .. }
+        | MempoolSequence::TxAdded { zmq_seq, .. } => Some(*zmq_seq),
+        _ => None,
+    }
+}
+
+fn receive_mpsq(subscriber: &zmq::Socket) -> Result<MempoolSequence, ZMQSeqListenerError> {
     let res = {
         let msg = subscriber.recv_multipart(0)?;
-        if *wait {
-            barrier.wait();
-            *wait = false;
-        }
-
         let mpsq = MempoolSequence::try_from(msg)?;
         Ok(mpsq)
     };

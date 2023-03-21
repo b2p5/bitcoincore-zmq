@@ -5,8 +5,12 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+check_node =["dep:bitcoincore-rpc"]
+
 [dependencies]
 hex = "0.4.3"
 url = { version="2.3.1"}
 zmq = "0.10.0"
 thiserror = "1.0.39"
+bitcoincore-rpc = {path="../rust-bitcoincore-rpc/client", optional=true}
