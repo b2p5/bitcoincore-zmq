@@ -38,8 +38,15 @@ fn get_client_by_user_passw(ip: &str, user_name: String, passwd: String) -> Resu
 ///        passwd: "my_passwd".to_string(),
 ///    })?;
 ///
+///    let has_index = checker.check_tx_index()?;
+///    if !has_index {
+///        return Err(anyhow!(
+///            "bitcoind must have transactions index enabled, add txindex=1 to bitcoin.conf file"
+///        ));
+///    }
+///
 ///    println!("Waiting to node Ok");
-///    checker.wait_till_node_ok(2, false, Duration::from_secs(5))?;
+///    checker.wait_till_node_ok(2, Duration::from_secs(5))?;
 ///    println!("Node Ok");
 /// ```
 pub struct NodeChecker {
@@ -75,21 +82,15 @@ impl NodeChecker {
         Ok(false)
     }
 
-    /// Wait until bitcoind node has at least `min_out_connections`, has downloaded all blockchain,
-    /// and tx index is enabled (if `tx_index` parameter is true).
-    ///
+    /// Wait until bitcoind node has at least `min_out_connections` and has downloaded all blockchain,
     /// Check is every sleep_time duration.
     pub fn wait_till_node_ok(
         &self,
         min_out_connections: usize,
-        tx_index: bool,
         sleep_time: Duration,
     ) -> Result<bool> {
         loop {
-            if self.check_network_peers(min_out_connections)?
-                && self.check_blockchain_in_sync()?
-                && (self.check_tx_index()? || !tx_index)
-            {
+            if self.check_network_peers(min_out_connections)? && self.check_blockchain_in_sync()? {
                 return Ok(true);
             }
             thread::sleep(sleep_time);

@@ -13,4 +13,5 @@ hex = "0.4.3"
 url = { version="2.3.1"}
 zmq = "0.10.0"
 thiserror = "1.0.39"
-bitcoincore-rpc = {path="../rust-bitcoincore-rpc/client", optional=true}
+bitcoincore-rpc = {version="0.17.0", optional=true}
+# bitcoincore-rpc = {path="../rust-bitcoincore-rpc/client", optional=true}

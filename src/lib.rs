@@ -1,5 +1,4 @@
 use crate::errors::ZMQSeqListenerError;
-use std::any::Any;
 use std::str;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -142,9 +141,9 @@ fn parse_zmq_seq_num(value: &[u8]) -> Result<u32, ZMQSeqListenerError> {
 ///
 /// ```
 pub struct ZmqSeqListener {
-    rx: Receiver<MempoolSequence>,
-    stop: Arc<AtomicBool>,
-    thread: JoinHandle<()>,
+    pub rx: Receiver<MempoolSequence>,
+    pub stop: Arc<AtomicBool>,
+    pub thread: JoinHandle<()>,
 }
 
 impl ZmqSeqListener {
@@ -195,17 +194,6 @@ impl ZmqSeqListener {
         });
         barrierc.wait();
         Ok(ZmqSeqListener { rx, stop, thread })
-    }
-
-    ///Stops the listening thread. Only callable once.
-    pub fn stop(self) -> Result<(), Box<dyn Any + Send + 'static>> {
-        self.stop.store(true, Ordering::SeqCst);
-        self.thread.join()
-    }
-
-    ///Obtains a `Receiver<MempoolSequence>`
-    pub fn receiver(&self) -> &Receiver<MempoolSequence> {
-        &self.rx
     }
 }
 
