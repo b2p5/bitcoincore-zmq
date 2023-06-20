@@ -135,7 +135,7 @@ fn parse_zmq_seq_num(value: &[u8]) -> Result<u32, ZMQSeqListenerError> {
 /// ```
 ///    let zmqseqlistener = ZmqSeqListener::start(&Url::from_str("tcp://localhost:29000")?)?;
 ///    loop{
-///        let kk = zmqseqlistener.receiver().recv()?;
+///        let kk = zmqseqlistener.rx.recv()?;
 ///        println!("{:?}", kk);
 ///    }
 ///

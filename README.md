@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     ctrlc::set_handler(move || stop_th2.store(true, Ordering::SeqCst))?;
     let zmqseqlistener = ZmqSeqListener::start(&Url::from_str("tcp://localhost:29000")?)?;
     while !stop_th.load(Ordering::SeqCst) {
-        let kk = zmqseqlistener.receiver().recv()?;
+        let kk = zmqseqlistener.rx.recv()?;
         println!("{:?}", kk);
     }
     Ok(())
