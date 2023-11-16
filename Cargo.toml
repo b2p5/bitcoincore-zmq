@@ -21,4 +21,4 @@ bitcoincore-rpc = "0.18.0"
 reqwest = { version = "0.11", features = ["blocking"] }
 bitcoin = "0.31.0"
 bitcoincore-zmqsequence= {path = "../bitcoincore-zmqsequence-master", features=["check_node"] }
-
+# bitcoincore-zmqsequence= {version = "0.1", features=["check_node"] }
