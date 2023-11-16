@@ -10,12 +10,15 @@ license = "MIT OR Apache-2.0"
 repository= "https://github.com/dev7ba/bitcoincore-zmq"
 readme="README.md"
 
-[features]
-check_node =["dep:bitcoincore-rpc"]
-
 [dependencies]
 hex = "0.4.3"
 url = { version="2.3.1"}
 zmq = "0.10.0"
 thiserror = "1.0.39"
-bitcoincore-rpc = {version="0.17.0", optional=true}
+anyhow = "1.0.75"
+ctrlc = "3.4.1"
+bitcoincore-rpc = "0.18.0"
+reqwest = { version = "0.11", features = ["blocking"] }
+bitcoin = "0.31.0"
+bitcoincore-zmqsequence= {path = "../bitcoincore-zmqsequence-master", features=["check_node"] }
+
